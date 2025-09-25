@@ -4,6 +4,20 @@ from huggingface_hub import snapshot_download
 from utils import AVAILABLE_MODELS, HF_MODEL_MAPPING, logger
 
 
+def download_model(model_name: str, repo_id: str, local_path: str) -> None:
+    try:
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=local_path,
+            local_dir_use_symlinks=False,
+            cache_dir=None,
+        )
+        logger.info(f"Model {model_name} downloaded to {local_path}")
+
+    except Exception as e:
+        logger.error(f"Error downloading {model_name}: {e}")
+
+
 def download_models() -> None:
     os.makedirs("./models", exist_ok=True)
 
@@ -11,18 +25,7 @@ def download_models() -> None:
         logger.info(f"Downloading model: {model_name}")
 
         repo_id = HF_MODEL_MAPPING[model_name]
-
-        try:
-            snapshot_download(
-                repo_id=repo_id,
-                local_dir=local_path,
-                local_dir_use_symlinks=False,
-                cache_dir=None,
-            )
-            logger.info(f"Model {model_name} downloaded to {local_path}")
-
-        except Exception as e:
-            logger.error(f"Error downloading {model_name}: {e}")
+        download_model(model_name=model_name, repo_id=repo_id, local_path=local_path)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
+from download_models import download_model
 from faster_whisper import WhisperModel
 from huggingface_hub.errors import HFValidationError
-from utils import AVAILABLE_MODELS, AppState, Language
+from utils import AVAILABLE_MODELS, HF_MODEL_MAPPING, AppState, Language
 
 
 class TranscriptionGUI:
@@ -168,9 +169,13 @@ class TranscriptionGUI:
                 model_path = AVAILABLE_MODELS["base"]
                 model = WhisperModel(model_path, device="cpu", compute_type="int8", local_files_only=True)
 
-            except HFValidationError as e:
-                self.result_queue.put(("log", f"Invalid model path '{model_size}': {e}. Using 'base' instead."))
-                model = WhisperModel("base", device="cpu", compute_type="int8")
+            except HFValidationError:
+                self.result_queue.put(("log", f"Model '{model_size}' not found, downloading..."))
+                model_path = AVAILABLE_MODELS[model_size]
+                repo_id = HF_MODEL_MAPPING[model_size]
+                download_model(model_name=model_size, repo_id=repo_id, local_path=model_path)
+                self.result_queue.put(("log", f"Model '{model_size}' downloaded successfully"))
+                model = WhisperModel(model_path, device="cpu", compute_type="int8", local_files_only=True)
 
             if self.stop_flag.is_set():
                 return
