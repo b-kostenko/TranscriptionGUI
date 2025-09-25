@@ -159,7 +159,6 @@ class TranscriptionGUI:
             if self.stop_flag.is_set():
                 return
 
-            print(1)
             try:
                 model_path = AVAILABLE_MODELS[model_size]
                 model = WhisperModel(model_path, device="cpu", compute_type="int8", local_files_only=True)
@@ -171,7 +170,7 @@ class TranscriptionGUI:
 
             except HFValidationError as e:
                 self.result_queue.put(("log", f"Invalid model path '{model_size}': {e}. Using 'base' instead."))
-                model = WhisperModel("base", device="cpu", compute_type="int8", download_root="./models")
+                model = WhisperModel("base", device="cpu", compute_type="int8")
 
             if self.stop_flag.is_set():
                 return
