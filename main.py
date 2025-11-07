@@ -1,5 +1,6 @@
 import os
 import queue
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -9,13 +10,14 @@ from typing import Callable
 from download_models import download_model
 from faster_whisper import WhisperModel
 from huggingface_hub.errors import HFValidationError
+from moviepy import VideoFileClip
 from utils import AVAILABLE_MODELS, HF_MODEL_MAPPING, AppState, Language
 
 
 class TranscriptionGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Audio Transcription")
+        self.root.title("Audio/Video Transcription")
         self.root.geometry("600x600")
         self.root.resizable(True, True)
 
@@ -46,14 +48,14 @@ class TranscriptionGUI:
 
         ttk.Label(
             main_frame,
-            text="🎵 Audio Transcription",
+            text="🎵 Audio/Video Transcription",
             font=("Arial", 16, "bold"),
         ).grid(row=0, column=0, columnspan=3, pady=(0, 20))
 
         self.create_file_selector(
             parent=main_frame,
             row=1,
-            label="Audio file:",
+            label="Audio/Video file:",
             var=self.state.audio_file,
             on_browse=self.browse_audio,
         )
@@ -119,7 +121,7 @@ class TranscriptionGUI:
 
         # Check input data
         if not self.state.audio_file.get():
-            messagebox.showerror("Error", "Select audio file")
+            messagebox.showerror("Error", "Select audio or video file")
             return
 
         if not self.state.output_file.get():
@@ -146,13 +148,59 @@ class TranscriptionGUI:
         self.stop_flag.set()
         self.update_status("Stopping...")
 
+    def is_video_file(self, file_path: str) -> bool:
+        """Check if file is a video file based on extension."""
+        video_extensions = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
+        file_ext = os.path.splitext(file_path)[1].lower()
+        return file_ext in video_extensions
+
+    def extract_audio_from_video(self, video_path: str) -> str:
+        """Extract audio from video file and return path to temporary audio file."""
+        self.result_queue.put(("status", "Extracting audio from video..."))
+        self.result_queue.put(("log", f"Extracting audio from video: {os.path.basename(video_path)}"))
+        
+        # Create temporary audio file
+        temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+        temp_audio_path = temp_audio.name
+        temp_audio.close()
+        
+        try:
+            video = VideoFileClip(video_path)
+            if video.audio is None:
+                raise ValueError("Video file does not contain an audio track")
+            
+            video.audio.write_audiofile(
+                temp_audio_path,
+                codec='pcm_s16le',
+                logger=None
+            )
+            video.close()
+            
+            self.result_queue.put(("log", "Audio extracted successfully"))
+            return temp_audio_path
+        except Exception as e:
+            # Clean up temp file if extraction failed
+            if os.path.exists(temp_audio_path):
+                os.unlink(temp_audio_path)
+            raise Exception(f"Failed to extract audio from video: {str(e)}")
+
     def transcription_worker(self) -> None:
         """Worker function for transcription in separate thread."""
+        temp_audio_path = None
         try:
-            audio_path = self.state.audio_file.get()
+            input_path = self.state.audio_file.get()
             output_path = self.state.output_file.get()
             language = self.state.language.get() if self.state.language.get() != "auto" else None
             model_size = self.state.model_size.get()
+
+            # Extract audio from video if needed
+            if self.is_video_file(input_path):
+                if self.stop_flag.is_set():
+                    return
+                temp_audio_path = self.extract_audio_from_video(input_path)
+                audio_path = temp_audio_path
+            else:
+                audio_path = input_path
 
             self.result_queue.put(("status", "Loading model..."))
             self.result_queue.put(("log", f"Loading model: {model_size}"))
@@ -181,7 +229,7 @@ class TranscriptionGUI:
                 return
 
             self.result_queue.put(("status", "Transcribing..."))
-            self.result_queue.put(("log", f"Starting transcription of file: {os.path.basename(audio_path)}"))
+            self.result_queue.put(("log", f"Starting transcription of file: {os.path.basename(input_path)}"))
 
             segments, info = model.transcribe(audio_path, beam_size=1, language=language)
 
@@ -219,6 +267,13 @@ class TranscriptionGUI:
             self.result_queue.put(("log", f"ERROR: {error_msg}"))
 
         finally:
+            # Clean up temporary audio file if it was created
+            if temp_audio_path and os.path.exists(temp_audio_path):
+                try:
+                    os.unlink(temp_audio_path)
+                    self.result_queue.put(("log", "Temporary audio file cleaned up"))
+                except Exception as e:
+                    self.result_queue.put(("log", f"Warning: Could not delete temporary file: {str(e)}"))
             self.result_queue.put(("finished", None))
 
     def check_queue(self) -> None:
@@ -284,12 +339,18 @@ class TranscriptionGUI:
         ttk.Button(parent, text="Browse...", command=on_browse).grid(row=row, column=2, pady=5)
 
     def browse_audio(self) -> None:
-        """Select audio file."""
+        """Select audio or video file."""
         filetypes = [
+            ("All supported files", "*.mp3 *.wav *.m4a *.flac *.ogg *.aac *.mp4 *.avi *.mkv *.mov *.wmv *.flv *.webm *.m4v"),
             ("Audio files", "*.mp3 *.wav *.m4a *.flac *.ogg *.aac"),
-            ("All files", "*.*"),
+            ("Video files", "*.mp4 *.avi *.mkv *.mov *.wmv *.flv *.webm *.m4v"),
+            ("MP3 files", "*.mp3"),
+            ("WAV files", "*.wav"),
+            ("MP4 files", "*.mp4"),
+            ("AVI files", "*.avi"),
+            ("MKV files", "*.mkv")
         ]
-        filename = filedialog.askopenfilename(title="Select audio file", filetypes=filetypes)
+        filename = filedialog.askopenfilename(title="Select audio or video file", filetypes=filetypes)
         if filename:
             self.state.audio_file.set(filename)
             if not self.state.output_file.get():
